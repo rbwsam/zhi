@@ -1,4 +1,4 @@
-# zhi 🌐
+# zhi 🕷️
 
 A concurrent web crawler that detects slow pages, broken links, and unhealthy HTTP status codes across your site.
 
