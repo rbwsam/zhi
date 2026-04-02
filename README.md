@@ -12,30 +12,23 @@ A concurrent web crawler that detects slow pages, broken links, and unhealthy HT
 
 ## Requirements
 
-- Node.js 18.0.0 or higher
+- Node.js 20.0.0 or higher
 
 ## Installation
 
-Clone the repository and install dependencies:
+### From npm (Recommended)
+```bash
+npm install -g @rbwsam/zhi
+zhi <url> [options]
+```
 
+### From source (Development)
 ```bash
 git clone https://github.com/rbwsam/zhi.git
 cd zhi
 npm install
 npm run build
-```
-
-Then use it directly:
-
-```bash
 node dist/index.js <url> [options]
-```
-
-Or create a global symlink for easier access:
-
-```bash
-npm link
-zhi <url> [options]
 ```
 
 ## Quick Start

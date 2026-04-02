@@ -1,5 +1,5 @@
 {
-  "name": "zhi",
+  "name": "@rbwsam/zhi",
   "version": "1.0.0",
   "description": "Concurrent web crawler that detects slow pages, broken links, and unhealthy HTTP status codes across your site",
   "main": "dist/index.js",
@@ -11,15 +11,20 @@
     "postbuild": "chmod +x dist/index.js",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["cli", "crawler", "health-check", "website"],
+  "keywords": [
+    "cli",
+    "crawler",
+    "health-check",
+    "website"
+  ],
   "author": "Sam Leavens",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rbwsam/zhi"
+    "url": "git+https://github.com/rbwsam/zhi.git"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "files": [
     "dist/",
