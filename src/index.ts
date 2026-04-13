@@ -193,7 +193,6 @@ function generateReport(results: PageResult[], startUrl: string, maxPageSize: nu
 const program = new Command();
 
 program
-  .version("1.0.0")
   .description("A concurrent CLI tool to check website health.")
   .argument("<url>", "The starting URL for the crawl.")
   .option(
