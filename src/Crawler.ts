@@ -1,5 +1,6 @@
 import axios, { AxiosResponse, AxiosError } from "axios";
 import { load } from "cheerio";
+import { Readable } from "stream";
 import { URL } from "url";
 
 export interface PageResult {
@@ -8,6 +9,8 @@ export interface PageResult {
   latencyMs: number;
   type: "page" | "asset" | "error";
   errorMessage?: string;
+  bodySizeExceeded?: boolean;
+  bodySize?: number;
 }
 
 export interface CrawlResult {
@@ -17,6 +20,7 @@ export interface CrawlResult {
 
 const REQUEST_TIMEOUT_MS = 5000;
 const MAX_REDIRECTS = 5;
+
 
 function isHtmlContent(response: AxiosResponse): boolean {
   return response.headers["content-type"]?.includes("text/html") ?? false;
@@ -42,13 +46,52 @@ function getStatusCode(error: AxiosError | Error): number {
   return axios.isAxiosError(error) ? (error.response?.status ?? 0) : 0;
 }
 
+async function readStreamBody(
+  stream: Readable,
+  maxBytes: number
+): Promise<{ body: Buffer; truncated: boolean; totalBytes: number }> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  let truncated = false;
+
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.length;
+    if (truncated) {
+      continue; // Already over limit, just draining for accurate latency
+    }
+    if (totalBytes >= maxBytes) {
+      truncated = true;
+      chunks.length = 0; // Free buffered data
+      continue;
+    }
+    chunks.push(buffer);
+  }
+
+  return {
+    body: truncated ? Buffer.alloc(0) : Buffer.concat(chunks),
+    truncated,
+    totalBytes,
+  };
+}
+
+async function drainStream(stream: Readable): Promise<number> {
+  let totalBytes = 0;
+  for await (const chunk of stream) {
+    totalBytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk);
+  }
+  return totalBytes;
+}
+
 export class Crawler {
   public static readonly DEFAULT_CONCURRENCY = 10;
   public static readonly DEFAULT_MAX_URLS = 2000;
+  public static readonly DEFAULT_MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5MB
 
   private readonly baseDomain: string;
   private readonly MAX_CONCURRENCY: number;
   private readonly maxUrls: number;
+  private readonly maxPageSize: number;
 
   private visitedUrls = new Set<string>();
   private pendingUrls = new Set<string>();
@@ -58,7 +101,8 @@ export class Crawler {
   constructor(
     startUrl: string,
     maxConcurrency: number = Crawler.DEFAULT_CONCURRENCY,
-    maxUrls: number = Crawler.DEFAULT_MAX_URLS
+    maxUrls: number = Crawler.DEFAULT_MAX_URLS,
+    maxPageSize: number = Crawler.DEFAULT_MAX_PAGE_SIZE
   ) {
     try {
       const urlObj = new URL(startUrl);
@@ -66,6 +110,7 @@ export class Crawler {
       this.pendingUrls.add(startUrl);
       this.MAX_CONCURRENCY = maxConcurrency;
       this.maxUrls = maxUrls;
+      this.maxPageSize = maxPageSize;
     } catch (e) {
       throw new Error(`Invalid starting URL: ${startUrl}`);
     }
@@ -111,6 +156,7 @@ export class Crawler {
     return axios.get(url, {
       maxRedirects: MAX_REDIRECTS,
       timeout: REQUEST_TIMEOUT_MS,
+      responseType: "stream",
       headers: {
         "User-Agent": "zhi/1.0.0 (Website Health Inspector)"
       }
@@ -152,13 +198,25 @@ export class Crawler {
 
     try {
       const response = await this.fetchUrl(url);
-      const latencyMs = Date.now() - startTime;
-      const result = this.createSuccessResult(url, response, latencyMs);
+      const stream = response.data as Readable;
 
-      this.results.push(result);
-
-      if (result.type === "page") {
-        this.extractAndFilterLinks(response.data, url);
+      if (isHtmlContent(response)) {
+        const { body, truncated, totalBytes } = await readStreamBody(stream, this.maxPageSize);
+        const latencyMs = Date.now() - startTime;
+        const result = this.createSuccessResult(url, response, latencyMs);
+        result.bodySize = totalBytes;
+        if (truncated) {
+          result.bodySizeExceeded = true;
+        } else {
+          this.extractAndFilterLinks(body, url);
+        }
+        this.results.push(result);
+      } else {
+        const totalBytes = await drainStream(stream);
+        const latencyMs = Date.now() - startTime;
+        const result = this.createSuccessResult(url, response, latencyMs);
+        result.bodySize = totalBytes;
+        this.results.push(result);
       }
     } catch (error) {
       const latencyMs = Date.now() - startTime;
