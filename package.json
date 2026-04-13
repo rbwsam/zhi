@@ -1,6 +1,6 @@
 {
   "name": "@rbwsam/zhi",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Concurrent web crawler that detects slow pages, broken links, and unhealthy HTTP status codes across your site",
   "main": "dist/index.js",
   "bin": {
