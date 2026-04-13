@@ -67,7 +67,7 @@ function printSlowResponsesReport(results: PageResult[]): void {
 
   console.log(
     chalk.yellow.bold(
-      `## 🐢 Slow Responses (> ${SLOW_THRESHOLD_MS}ms) (${slowResponses.length} found)`
+      `\n🐢 Slow Responses (> ${SLOW_THRESHOLD_MS}ms) (${slowResponses.length} found)`
     )
   );
 
@@ -97,12 +97,12 @@ function printBodySizeExceededReport(results: PageResult[], maxPageSize: number)
 
   console.log(
     chalk.yellow.bold(
-      `## ⚠️  Body Size Exceeded (> ${formatBytes(maxPageSize)}) (${exceeded.length} found)`
+      `\n⚠️  Body Size Exceeded (> ${formatBytes(maxPageSize)}) (${exceeded.length} found)`
     )
   );
   console.log(
     chalk.gray(
-      `   Links on these pages were not extracted. Parts of the site may not have been crawled.`
+      `Links on these pages were not extracted. Parts of the site may not have been crawled.`
     )
   );
 
@@ -138,7 +138,7 @@ function printUnhealthyStatusesReport(results: PageResult[]): void {
 
   console.log(
     chalk.red.bold(
-      `## 🚨 Unhealthy HTTP Status Codes (> ${HEALTHY_STATUS_CODE_MAX}) & Network Errors (${unhealthyStatuses.length} found)`
+      `\n🚨 Unhealthy HTTP Status Codes (> ${HEALTHY_STATUS_CODE_MAX}) & Network Errors (${unhealthyStatuses.length} found)`
     )
   );
 
@@ -179,12 +179,10 @@ function generateReport(results: PageResult[], startUrl: string, maxPageSize: nu
   console.log(
     chalk.white(`Total URLs Processed: ${chalk.bold(results.length)}`)
   );
-  console.log(`\n`);
+  console.log();
 
   printSlowResponsesReport(results);
-  console.log(chalk.gray("\n---"));
   printBodySizeExceededReport(results, maxPageSize);
-  console.log(chalk.gray("\n---"));
   printUnhealthyStatusesReport(results);
 
   console.log(
