@@ -23,7 +23,8 @@ const MAX_REDIRECTS = 5;
 
 
 function isHtmlContent(response: AxiosResponse): boolean {
-  return response.headers["content-type"]?.includes("text/html") ?? false;
+  const contentType = response.headers["content-type"];
+  return typeof contentType === "string" && contentType.includes("text/html");
 }
 
 function normalizeUrl(url: string): string {
