@@ -46,11 +46,89 @@ function validateAndNormalizeUrl(url: string): URL {
   return parsedUrl;
 }
 
-function createTable(headers: string[]): Table.Table {
-  return new Table({
+function getTerminalWidth(): number {
+  // process.stdout.columns is undefined when output is piped/redirected.
+  return process.stdout.columns ?? 80;
+}
+
+const CELL_PADDING = 2; // cli-table3 reserves 1 space on each side of a cell.
+const MIN_FLEX_CONTENT = 16; // never shrink a wrapping column below this.
+
+// Hard-wraps a plain (un-coloured) string to `width` columns, breaking anywhere
+// — including mid-"word" — so long space-less URLs split cleanly. cli-table3's
+// own char-level wrap (wrapOnWordBoundary: false) counts ANSI escape codes as
+// visible characters and slices through them, so we wrap the raw text ourselves
+// *before* applying colour. No data is dropped; it just spans more lines.
+function hardWrap(text: string, width: number): string {
+  if (width <= 0 || text.length <= width) return text;
+  const lines: string[] = [];
+  for (let i = 0; i < text.length; i += width) {
+    lines.push(text.slice(i, i + width));
+  }
+  return lines.join("\n");
+}
+
+interface SizedTable {
+  table: Table.Table;
+  // Content width (excluding padding) available to each column.
+  widths: number[];
+}
+
+// Builds a table sized to the terminal. `plainRows` is the uncoloured cell
+// matrix used purely for measurement; `flexibleCols` are the column indices
+// that may wrap (URLs, error details). The returned `widths` let callers
+// hard-wrap those columns' values so nothing is ever truncated.
+function createTable(
+  headers: string[],
+  plainRows: string[][],
+  flexibleCols: number[]
+): SizedTable {
+  const numCols = headers.length;
+  const isFlex = new Set(flexibleCols);
+
+  // Natural content width (no padding) for every column.
+  const natural = headers.map((h, i) => {
+    let w = h.length;
+    for (const row of plainRows) w = Math.max(w, row[i].length);
+    return w;
+  });
+
+  const colWidths = natural.map((w) => w + CELL_PADDING);
+
+  const flexIdx = flexibleCols.filter((i) => i < numCols);
+  if (flexIdx.length > 0) {
+    const borders = numCols + 1;
+    const fixedTotal = natural.reduce(
+      (sum, w, i) => (isFlex.has(i) ? sum : sum + w + CELL_PADDING),
+      0
+    );
+    let remaining = getTerminalWidth() - borders - fixedTotal;
+
+    // Water-fill: hand out the budget smallest-need first, so a column that
+    // wants less than its share leaves the surplus for the columns that want
+    // more (e.g. a short Error Details column gives its slack to a long URL).
+    const order = [...flexIdx].sort((a, b) => natural[a] - natural[b]);
+    order.forEach((col, k) => {
+      const share = Math.floor(remaining / (order.length - k));
+      const width = Math.max(
+        MIN_FLEX_CONTENT + CELL_PADDING,
+        Math.min(natural[col] + CELL_PADDING, share)
+      );
+      colWidths[col] = width;
+      remaining -= width;
+    });
+  }
+
+  const table = new Table({
     head: headers.map((h) => chalk.white.bold(h)),
+    colWidths,
+    // Word-boundary wrap is ANSI-aware (measures with strlen). We pre-wrap the
+    // long plain columns ourselves, so this only acts as a safety net.
+    wordWrap: true,
     style: { head: [], border: [] },
   });
+
+  return { table, widths: colWidths.map((w) => w - CELL_PADDING) };
 }
 
 function printSlowResponsesReport(results: PageResult[]): void {
@@ -71,19 +149,25 @@ function printSlowResponsesReport(results: PageResult[]): void {
     )
   );
 
-  const table = createTable(["URL", "Type", "Status", "Size", "Latency (ms)"]);
-
-  slowResponses
+  const rows = slowResponses
     .sort((a, b) => b.latencyMs - a.latencyMs)
-    .forEach((r) => {
-      table.push([
-        r.url,
-        r.type,
-        r.statusCode.toString(),
-        r.bodySize != null ? formatBytes(r.bodySize) : "-",
-        chalk.yellow(r.latencyMs.toString()),
-      ]);
-    });
+    .map((r) => [
+      r.url,
+      r.type,
+      r.statusCode.toString(),
+      r.bodySize != null ? formatBytes(r.bodySize) : "-",
+      r.latencyMs.toString(),
+    ]);
+
+  const { table, widths } = createTable(
+    ["URL", "Type", "Status", "Size", "Latency (ms)"],
+    rows,
+    [0]
+  );
+
+  rows.forEach(([url, type, status, size, latency]) => {
+    table.push([hardWrap(url, widths[0]), type, status, size, chalk.yellow(latency)]);
+  });
 
   console.log(table.toString());
 }
@@ -106,15 +190,21 @@ function printBodySizeExceededReport(results: PageResult[], maxPageSize: number)
     )
   );
 
-  const table = createTable(["URL", "Status", "Size", "Latency (ms)"]);
+  const rows = exceeded.map((r) => [
+    r.url,
+    r.statusCode.toString(),
+    formatBytes(r.bodySize ?? 0),
+    r.latencyMs.toString(),
+  ]);
 
-  exceeded.forEach((r) => {
-    table.push([
-      r.url,
-      r.statusCode.toString(),
-      chalk.yellow(formatBytes(r.bodySize ?? 0)),
-      r.latencyMs.toString(),
-    ]);
+  const { table, widths } = createTable(
+    ["URL", "Status", "Size", "Latency (ms)"],
+    rows,
+    [0]
+  );
+
+  rows.forEach(([url, status, size, latency]) => {
+    table.push([hardWrap(url, widths[0]), status, chalk.yellow(size), latency]);
   });
 
   console.log(table.toString());
@@ -147,35 +237,49 @@ function printUnhealthyStatusesReport(results: PageResult[]): void {
     headers.push("Error Details");
   }
 
-  const table = createTable(headers);
-
-  unhealthyStatuses.forEach((r) => {
+  const rows = unhealthyStatuses.map((r) => {
     const row = [
       r.url,
       r.type,
-      chalk.red(r.statusCode.toString()),
+      r.statusCode.toString(),
       r.bodySize != null ? formatBytes(r.bodySize) : "-",
       r.latencyMs.toString(),
     ];
     if (hasErrorDetails) {
-      row.push(r.errorMessage ? chalk.yellow(r.errorMessage) : "-");
+      row.push(r.errorMessage ?? "-");
     }
-    table.push(row);
+    return row;
+  });
+
+  const { table, widths } = createTable(
+    headers,
+    rows,
+    hasErrorDetails ? [0, 5] : [0]
+  );
+
+  rows.forEach((row) => {
+    const colored = [
+      hardWrap(row[0], widths[0]),
+      row[1],
+      chalk.red(row[2]),
+      row[3],
+      row[4],
+    ];
+    if (hasErrorDetails) {
+      const error = hardWrap(row[5], widths[5]);
+      colored.push(row[5] === "-" ? "-" : chalk.yellow(error));
+    }
+    table.push(colored);
   });
 
   console.log(table.toString());
 }
 
 function generateReport(results: PageResult[], startUrl: string, maxPageSize: number): void {
-  console.log(
-    chalk.cyan.bold(`\n======================================================`)
-  );
-  console.log(
-    chalk.cyan.bold(`         🌐 Website Health Report for ${startUrl}`)
-  );
-  console.log(
-    chalk.cyan.bold(`======================================================`)
-  );
+  const rule = "=".repeat(Math.min(getTerminalWidth(), 60));
+  console.log(chalk.cyan.bold(`\n${rule}`));
+  console.log(chalk.cyan.bold(`🌐 Website Health Report for ${startUrl}`));
+  console.log(chalk.cyan.bold(rule));
   console.log(
     chalk.white(`Total URLs Processed: ${chalk.bold(results.length)}`)
   );
@@ -185,9 +289,7 @@ function generateReport(results: PageResult[], startUrl: string, maxPageSize: nu
   printBodySizeExceededReport(results, maxPageSize);
   printUnhealthyStatusesReport(results);
 
-  console.log(
-    chalk.cyan.bold(`\n======================================================`)
-  );
+  console.log(chalk.cyan.bold(`\n${rule}`));
 }
 
 const program = new Command();
